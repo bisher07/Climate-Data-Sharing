@@ -1,0 +1,34 @@
+[
+  {
+    "observation_id": "OBS-2026-01-14-1200",
+    "station_id": "ST-SHJ-001",
+    "instrument_id": "IN-THERM-014",
+    "phenomenon_time": "2026-01-14T12:00:00+00:00",
+    "variables": {
+      "air_temperature": {"value": 27.4, "unit": "degC"},
+      "relative_humidity": {"value": 62.0, "unit": "percent"}
+    },
+    "source_system": "org1-aws-telemetry"
+  },
+  {
+    "observation_id": "OBS-2026-01-14-1300",
+    "station_id": "ST-SHJ-001",
+    "instrument_id": "IN-THERM-014",
+    "phenomenon_time": "2026-01-14T13:00:00+00:00",
+    "variables": {
+      "air_temperature": {"value": 29.1, "unit": "degC"},
+      "relative_humidity": {"value": 58.0, "unit": "percent"}
+    },
+    "source_system": "org1-aws-telemetry"
+  },
+  {
+    "observation_id": "OBS-2026-01-14-1400-BAD",
+    "station_id": "ST-SHJ-001",
+    "instrument_id": "IN-THERM-014",
+    "phenomenon_time": "2026-01-14T14:00:00+00:00",
+    "variables": {
+      "air_temperature": {"value": 412.0, "unit": "degC"}
+    },
+    "source_system": "org1-aws-telemetry"
+  }
+]

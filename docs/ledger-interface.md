@@ -1,0 +1,109 @@
+# Ledger interface — the integration contract
+
+This is what the agent layer needs from the chaincode. It is a proposal, not a
+description of what exists: it was derived from what Org1's agents actually do,
+and from the specification in `claude.md`. Where the deployed chaincode differs,
+the chaincode wins — only `src/agent_prototype/ledger/` changes, never the
+agents.
+
+The Python form is [`ledger/port.py`](../src/agent_prototype/ledger/port.py).
+Everything the agents touch is in that one file.
+
+## The client
+
+```python
+class LedgerClient(Protocol):
+    @property
+    def org_id(self) -> str: ...                       # e.g. "Org1MSP"
+    def submit(self, function, /, **arguments) -> TxReceipt: ...
+    def evaluate(self, function, /, **arguments) -> Any: ...
+    def close(self) -> None: ...
+```
+
+Two properties matter more than the signatures.
+
+**The organization is a property of the connection.** `org_id` comes from the
+enrolled identity. No agent passes its own organization as an argument
+anywhere, so there is no place for an agent to claim to be a different one.
+
+**A rejection is a return value, not an exception.** `submit` answers with a
+`TxReceipt` whose status is `COMMITTED` or `REJECTED`. `LedgerError` is
+reserved for the network being unreachable or the identity unusable. Agents
+depend on that distinction: "the chaincode refused this record" is a normal,
+countable outcome, and Section 15's evaluation needs to count them.
+
+`TxReceipt` also carries optional `endorsing_orgs`, `endorsement_seconds` and
+`commit_seconds`. Fill them if the gateway exposes them; leave them at their
+defaults if not, rather than inventing values.
+
+## Functions
+
+Every write is proposed by an agent of the organization that will own the
+result. `owner_org` is never an argument — the chaincode takes it from the
+transaction creator's MSP ID.
+
+### Writes
+
+| Function | Argument | Returns |
+| --- | --- | --- |
+| `RegisterStation` | `request`: `StationRegistrationRequest` | the stored `Station` |
+| `RegisterInstrument` | `request`: `InstrumentRegistrationRequest` | the stored `Instrument` |
+| `CreateObservationAnchor` | `request`: `ObservationAnchorRequest` | the stored `ObservationAnchor` |
+| `RegisterForecastProduct` | `request`: `ForecastProductRequest` | the stored `ForecastProduct` |
+| `CreateAccessRequest` | `request`: `AccessRequestSubmission` | the stored `AccessRequest` |
+| `RespondToAccessRequest` | `request`: `AccessDecisionRequest` | the stored `AccessDecision` |
+
+### Reads
+
+| Function | Arguments | Returns |
+| --- | --- | --- |
+| `GetAsset` | `owner_org`, `doc_type`, `asset_id` | the asset, or `None` |
+| `ListAssets` | `owner_org`, `doc_type` | list of assets |
+| `VerifyObservationAnchor` | `owner_org`, `observation_id`, `data_hash` | `{exists, matches, owner_org, reason}` |
+| `ListAccessRequestsFor` | `target_org` | unanswered `AccessRequest`s addressed to that org |
+
+Payload shapes are the pydantic models in
+[`shared/models/assets.py`](../src/agent_prototype/shared/models/assets.py),
+serialised with `model_dump(mode="json")`.
+
+## Rules the chaincode must enforce
+
+The agents deliberately do not enforce these. An agent's checks are advisory and
+run before submission; these have to hold even when the agent is wrong,
+compromised, or replaced.
+
+1. **Ownership comes from the certificate.** `owner_org` on a stored asset is
+   the submitter's MSP ID. Never read it from the request payload — the request
+   models have no such field, and that is on purpose.
+2. **An organization writes only its own namespace.** Org1 cannot write Org2's
+   data, and Org3 cannot claim to own Org1's (Section 12).
+3. **Referential integrity within a namespace.** An instrument must be
+   registered at a station its own organization registered; an observation
+   anchor must reference an active station and an instrument installed at that
+   same station.
+4. **Identifiers are unique per namespace.** Re-registering an existing id is a
+   rejection, not an update.
+5. **An access decision may only answer a request addressed to the deciding
+   organization**, and it is written into the *decider's* namespace. It is a
+   separate asset rather than a mutation of the requester's record, because
+   neither organization may write into the other's namespace.
+6. **Observations cannot be anchored from the future**, beyond a small clock-skew
+   allowance.
+
+## Two things worth deciding together
+
+**Endorsement policy.** Section 2 says Org1 must co-endorse composite records
+that reference its stations, and Section 5 requires derived products to prove
+their lineage. A useful way to express this is: the submitting organization
+endorses, *and so does every organization whose namespace the transaction read*.
+In Fabric that is state-based endorsement — the owning org sets a key-level
+policy with `SetStateValidationParameter` when it creates a key. A plain
+channel-level policy is both too strict for single-org writes and too weak for
+lineage.
+
+**Canonical hashing.** `data_hash` is `sha256` over JSON with sorted keys, no
+insignificant whitespace and escaped non-ASCII
+([`shared/utilities/canonical.py`](../src/agent_prototype/shared/utilities/canonical.py)).
+Any component that recomputes a hash — chaincode, another organization's
+validator, an auditor — must use exactly this, or lineage and divergence
+detection silently stop working.

@@ -1,0 +1,18 @@
+[
+  {
+    "station_id": "ST-SHJ-001",
+    "name": "Sharjah Coastal AWS",
+    "latitude": 25.3463,
+    "longitude": 55.4209,
+    "elevation_m": 8.0,
+    "wmo_id": "41556"
+  },
+  {
+    "station_id": "ST-SHJ-002",
+    "name": "Al Dhaid Inland AWS",
+    "latitude": 25.2879,
+    "longitude": 55.8815,
+    "elevation_m": 105.0,
+    "wmo_id": "41557"
+  }
+]
