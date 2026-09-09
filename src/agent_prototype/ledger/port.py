@@ -78,6 +78,11 @@ class Fn(StrEnum):
     CREATE_OBSERVATION_ANCHOR = "CreateObservationAnchor"
     REGISTER_FORECAST_PRODUCT = "RegisterForecastProduct"
 
+    # --- writes, Org2 -----------------------------------------------------
+    REGISTER_SENSOR = "RegisterSensor"
+    CREATE_QUALITY_RECORD = "CreateQualityRecord"
+    CREATE_DIVERGENCE_FLAG = "CreateDivergenceFlag"
+
     # --- writes, access negotiation --------------------------------------
     # Written by the requesting org; answered by the target org in its own
     # namespace, since neither may write into the other's.

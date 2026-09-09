@@ -32,6 +32,9 @@ class DocType(StrEnum):
     FORECAST_PRODUCT = "forecast_product"
     ACCESS_REQUEST = "access_request"
     ACCESS_DECISION = "access_decision"
+    SENSOR = "sensor"
+    QUALITY_RECORD = "quality_record"
+    DIVERGENCE_FLAG = "divergence_flag"
 
 
 class AssetStatus(StrEnum):
@@ -140,6 +143,23 @@ class ObservationAnchorRequest(Frozen):
     doi: str | None = None
 
 
+class SensorRegistrationRequest(Frozen):
+    """Org2's equivalent of Org1's Station+Instrument, collapsed into one asset:
+    Section 3 lists only "Sensor registrations", not a separate site/device
+    split, matching Org2's dense low-cost network rather than Org1's staffed
+    meteorological stations."""
+
+    sensor_id: NonEmpty
+    name: NonEmpty
+    latitude: Latitude
+    longitude: Longitude
+    elevation_m: float
+    kind: NonEmpty  # e.g. "air-quality", "microclimate", "coastal"
+    model: NonEmpty
+    serial_number: NonEmpty
+    calibration: Calibration
+
+
 class ForecastProductRequest(Frozen):
     product_id: NonEmpty
     product_type: NonEmpty
@@ -180,6 +200,19 @@ class Station(LedgerAsset):
 class Instrument(LedgerAsset):
     doc_type: DocType = DocType.INSTRUMENT
     station_id: NonEmpty
+    kind: NonEmpty
+    model: NonEmpty
+    serial_number: NonEmpty
+    calibration: Calibration
+    status: AssetStatus = AssetStatus.ACTIVE
+
+
+class Sensor(LedgerAsset):
+    doc_type: DocType = DocType.SENSOR
+    name: NonEmpty
+    latitude: Latitude
+    longitude: Longitude
+    elevation_m: float
     kind: NonEmpty
     model: NonEmpty
     serial_number: NonEmpty
@@ -289,6 +322,56 @@ class AccessDecision(LedgerAsset):
     granted: list[AssetRef] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list)
     valid_until: datetime | None = None
+
+
+# --------------------------------------------------------------------------
+# Org2 quality / validation (Section 9)
+#
+# QualityRecord and DivergenceFlag are always written by Org2 — the org
+# running the validation — even when a DivergenceFlag references Org1 data.
+# Disagreement is not assumed to mean Org1 is wrong; it is only made visible.
+# --------------------------------------------------------------------------
+
+
+class QualityRecordRequest(Frozen):
+    observation_id: NonEmpty
+    quality_score: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    validation_method: NonEmpty
+    agent_id: NonEmpty
+    validated_at: datetime
+
+
+class QualityRecord(LedgerAsset):
+    doc_type: DocType = DocType.QUALITY_RECORD
+    observation_id: NonEmpty
+    quality_score: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    validation_method: NonEmpty
+    agent_id: NonEmpty
+    validated_at: datetime
+
+
+class DivergenceFlagRequest(Frozen):
+    flag_id: NonEmpty
+    org2_observation_id: NonEmpty
+    reference_observation_id: NonEmpty
+    reference_org: NonEmpty
+    divergence_metric: float
+    threshold: float = Field(ge=0.0)
+    evidence_hash: Sha256Hex
+    detected_at: datetime
+
+
+class DivergenceFlag(LedgerAsset):
+    doc_type: DocType = DocType.DIVERGENCE_FLAG
+    org2_observation_id: NonEmpty
+    reference_observation_id: NonEmpty
+    reference_org: NonEmpty
+    divergence_metric: float
+    threshold: float = Field(ge=0.0)
+    evidence_hash: Sha256Hex
+    detected_at: datetime
 
 
 def as_state(asset: LedgerAsset) -> dict[str, Any]:

@@ -138,14 +138,21 @@ def _register_instrument(led: InMemoryLedger, args: dict[str, Any]) -> dict[str,
 
 
 def _create_observation_anchor(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
+    """Shared by every org: `station_id`/`instrument_id` name the site an
+    anchor is attributed to, but what counts as valid attribution differs by
+    org shape. Org1 splits site into Station+Instrument; Org2 has one
+    combined Sensor asset carrying both ids. A registered Sensor satisfies
+    the check on its own; otherwise fall back to Org1's pair check."""
     request = args["request"]
-    led._own(DocType.STATION, request["station_id"], "station")
-    instrument = led._own(DocType.INSTRUMENT, request["instrument_id"], "instrument")
-    if instrument["station_id"] != request["station_id"]:
-        raise Rejected(
-            f"instrument {request['instrument_id']!r} is installed at station "
-            f"{instrument['station_id']!r}, not {request['station_id']!r}"
-        )
+    sensor = led._any(led.org_id, DocType.SENSOR, request["station_id"])
+    if sensor is None:
+        led._own(DocType.STATION, request["station_id"], "station")
+        instrument = led._own(DocType.INSTRUMENT, request["instrument_id"], "instrument")
+        if instrument["station_id"] != request["station_id"]:
+            raise Rejected(
+                f"instrument {request['instrument_id']!r} is installed at station "
+                f"{instrument['station_id']!r}, not {request['station_id']!r}"
+            )
     return led._put(
         DocType.OBSERVATION_ANCHOR,
         request["observation_id"],
@@ -156,6 +163,33 @@ def _create_observation_anchor(led: InMemoryLedger, args: dict[str, Any]) -> dic
 def _register_forecast_product(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
     request = args["request"]
     return led._put(DocType.FORECAST_PRODUCT, request["product_id"], request)
+
+
+def _register_sensor(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
+    request = args["request"]
+    return led._put(DocType.SENSOR, request["sensor_id"], {**request, "status": "ACTIVE"})
+
+
+def _create_quality_record(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
+    request = args["request"]
+    led._own(DocType.OBSERVATION_ANCHOR, request["observation_id"], "observation")
+    return led._put(DocType.QUALITY_RECORD, request["observation_id"], request)
+
+
+def _create_divergence_flag(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
+    request = args["request"]
+    led._own(DocType.OBSERVATION_ANCHOR, request["org2_observation_id"], "observation")
+    reference = led._any(
+        request["reference_org"], DocType.OBSERVATION_ANCHOR, request["reference_observation_id"]
+    )
+    if reference is None:
+        raise Rejected(
+            f"referenced observation {request['reference_observation_id']!r} owned by "
+            f"{request['reference_org']} does not exist"
+        )
+    return led._put(
+        DocType.DIVERGENCE_FLAG, request["flag_id"], request, drop=("flag_id",)
+    )
 
 
 def _create_access_request(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
@@ -227,6 +261,9 @@ _WRITES: dict[str, Callable[[InMemoryLedger, dict[str, Any]], Any]] = {
     Fn.REGISTER_FORECAST_PRODUCT: _register_forecast_product,
     Fn.CREATE_ACCESS_REQUEST: _create_access_request,
     Fn.RESPOND_TO_ACCESS_REQUEST: _respond_to_access_request,
+    Fn.REGISTER_SENSOR: _register_sensor,
+    Fn.CREATE_QUALITY_RECORD: _create_quality_record,
+    Fn.CREATE_DIVERGENCE_FLAG: _create_divergence_flag,
 }
 
 _READS: dict[str, Callable[[InMemoryLedger, dict[str, Any]], Any]] = {
