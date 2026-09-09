@@ -1,8 +1,12 @@
-"""Fixtures: Org1's agents wired to an in-memory ledger.
+"""Fixtures: Org1's and Org2's agents wired to one in-memory ledger.
 
 The ledger here is a stand-in with no security properties. These tests are
 about agent *behaviour* — what it screens, what it refuses, what it records —
 not about whether the blockchain enforces anything.
+
+Org2's connection is made with `connect_as`, so both organizations' agents see
+the same state. That is what makes cross-org divergence testable: Org2 has to
+be able to read an Org1 anchor to disagree with it.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from agent_prototype.agents import org2 as org2_agents
 from agent_prototype.agents.org1 import (
     IngestionProvenanceAgent,
     Org1IngestionPipeline,
@@ -21,15 +26,18 @@ from agent_prototype.shared.models import (
     Calibration,
     InstrumentRegistrationRequest,
     ObservationRecord,
+    SensorRegistrationRequest,
     StationRegistrationRequest,
     Variable,
 )
 from agent_prototype.shared.utilities import FixedClock
 
 ORG1 = "Org1MSP"
+ORG2 = "Org2MSP"
 ORG3 = "Org3MSP"
 T0 = datetime(2026, 1, 15, tzinfo=UTC)
 PHENOMENON_TIME = datetime(2026, 1, 14, 12, 0, tzinfo=UTC)
+SENSOR_ID = "SN-AQ-077"
 
 
 @pytest.fixture
@@ -112,3 +120,77 @@ def registered(ingestion, station_request, instrument_request):
     assert ingestion.register_station(station_request).committed
     assert ingestion.register_instrument(instrument_request).committed
     return ingestion
+
+
+# --- Org2 -------------------------------------------------------------------
+
+
+@pytest.fixture
+def org2_ledger(ledger) -> InMemoryLedger:
+    """Org2's view of the same ledger Org1 is writing to."""
+    return ledger.connect_as(ORG2)
+
+
+@pytest.fixture
+def org2_ingestion(org2_ledger, clock) -> org2_agents.IngestionProvenanceAgent:
+    return org2_agents.IngestionProvenanceAgent("org2.ingestion", org2_ledger, clock=clock)
+
+
+@pytest.fixture
+def org2_quality(org2_ledger, clock) -> org2_agents.QualityValidationAgent:
+    return org2_agents.QualityValidationAgent("org2.quality", org2_ledger, clock=clock)
+
+
+@pytest.fixture
+def org2_policy(org2_ledger, clock) -> org2_agents.PolicyEndorsementAgent:
+    return org2_agents.PolicyEndorsementAgent("org2.policy", org2_ledger, clock=clock)
+
+
+@pytest.fixture
+def org2_negotiation(org2_ledger, clock) -> org2_agents.AccessNegotiationAgent:
+    return org2_agents.AccessNegotiationAgent("org2.negotiation", org2_ledger, clock=clock)
+
+
+@pytest.fixture
+def org2_pipeline(
+    org2_ingestion, org2_quality, org2_policy
+) -> org2_agents.Org2ValidationPipeline:
+    return org2_agents.Org2ValidationPipeline(org2_ingestion, org2_quality, org2_policy)
+
+
+@pytest.fixture
+def sensor_request(calibration) -> SensorRegistrationRequest:
+    return SensorRegistrationRequest(
+        sensor_id=SENSOR_ID,
+        name="Al Majaz microclimate node",
+        latitude=25.3241,
+        longitude=55.3869,
+        elevation_m=5.0,
+        kind="microclimate",
+        model="Clarity Node-S",
+        serial_number="CN-88213",
+        calibration=calibration,
+    )
+
+
+@pytest.fixture
+def org2_observation() -> ObservationRecord:
+    """Both id fields carry the sensor id: Org2 has one combined Sensor asset
+    rather than Org1's separate station and instrument."""
+    return ObservationRecord(
+        station_id=SENSOR_ID,
+        instrument_id=SENSOR_ID,
+        phenomenon_time=PHENOMENON_TIME,
+        variables={
+            "air_temperature": Variable(value=27.9, unit="degC"),
+            "pm2_5": Variable(value=18.0, unit="ug/m3"),
+        },
+        source_system="org2-sensor-gateway",
+    )
+
+
+@pytest.fixture
+def org2_registered(org2_ingestion, sensor_request):
+    """Org2 with its sensor already on the ledger."""
+    assert org2_ingestion.register_sensor(sensor_request).committed
+    return org2_ingestion

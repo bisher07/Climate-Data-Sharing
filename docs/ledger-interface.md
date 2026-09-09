@@ -48,10 +48,18 @@ transaction creator's MSP ID.
 | --- | --- | --- |
 | `RegisterStation` | `request`: `StationRegistrationRequest` | the stored `Station` |
 | `RegisterInstrument` | `request`: `InstrumentRegistrationRequest` | the stored `Instrument` |
+| `RegisterSensor` | `request`: `SensorRegistrationRequest` | the stored `Sensor` |
 | `CreateObservationAnchor` | `request`: `ObservationAnchorRequest` | the stored `ObservationAnchor` |
 | `RegisterForecastProduct` | `request`: `ForecastProductRequest` | the stored `ForecastProduct` |
+| `CreateQualityRecord` | `request`: `QualityRecordRequest` | the stored `QualityRecord` |
+| `CreateDivergenceFlag` | `request`: `DivergenceFlagRequest` | the stored `DivergenceFlag` |
 | `CreateAccessRequest` | `request`: `AccessRequestSubmission` | the stored `AccessRequest` |
 | `RespondToAccessRequest` | `request`: `AccessDecisionRequest` | the stored `AccessDecision` |
+
+`Station`+`Instrument` and `Sensor` are two shapes of the same idea. Org1 runs
+staffed meteorological stations with separately calibrated instruments; Org2
+runs a dense low-cost network where the site *is* the device (Section 3), so
+its anchors carry the same sensor id in both `station_id` and `instrument_id`.
 
 ### Reads
 
@@ -61,6 +69,11 @@ transaction creator's MSP ID.
 | `ListAssets` | `owner_org`, `doc_type` | list of assets |
 | `VerifyObservationAnchor` | `owner_org`, `observation_id`, `data_hash` | `{exists, matches, owner_org, reason}` |
 | `ListAccessRequestsFor` | `target_org` | unanswered `AccessRequest`s addressed to that org |
+| `ListAccessDecisionsFor` | `requester_org` | `AccessDecision`s answering that org's requests |
+
+`ListAccessDecisionsFor` spans namespaces by design. An answer is written by
+the deciding organization into *its* namespace, so a requester cannot find the
+answers to its own requests by listing its own assets.
 
 Payload shapes are the pydantic models in
 [`shared/models/assets.py`](../src/agent_prototype/shared/models/assets.py),
@@ -80,7 +93,13 @@ compromised, or replaced.
 3. **Referential integrity within a namespace.** An instrument must be
    registered at a station its own organization registered; an observation
    anchor must reference an active station and an instrument installed at that
-   same station.
+   same station, or — for an organization with the combined `Sensor` shape — an
+   active sensor its own organization registered.
+   A `QualityRecord` must reference an observation anchor **the submitting
+   organization owns**: scoring another organization's raw reading is not a
+   quality record, it is a divergence flag.
+   A `DivergenceFlag` must reference an anchor the submitter owns *and* an
+   anchor that genuinely exists in the referenced organization's namespace.
 4. **Identifiers are unique per namespace.** Re-registering an existing id is a
    rejection, not an update.
 5. **An access decision may only answer a request addressed to the deciding
@@ -89,6 +108,10 @@ compromised, or replaced.
    neither organization may write into the other's namespace.
 6. **Observations cannot be anchored from the future**, beyond a small clock-skew
    allowance.
+7. **A divergence flag is evidence, not a verdict.** It records that two
+   readings differ, by how much, and against what threshold. Nothing in it
+   marks either organization as wrong, and committing one must give its author
+   no standing over the referenced organization's data (Section 9).
 
 ## Two things worth deciding together
 

@@ -94,6 +94,9 @@ class Fn(StrEnum):
     LIST_ASSETS = "ListAssets"
     VERIFY_OBSERVATION_ANCHOR = "VerifyObservationAnchor"
     LIST_ACCESS_REQUESTS_FOR = "ListAccessRequestsFor"
+    # The requesting org's side of negotiation: answers live in the deciding
+    # org's namespace, so a requester cannot find them by listing its own.
+    LIST_ACCESS_DECISIONS_FOR = "ListAccessDecisionsFor"
 
 
 @runtime_checkable

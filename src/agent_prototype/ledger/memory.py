@@ -213,7 +213,9 @@ def _respond_to_access_request(led: InMemoryLedger, args: dict[str, Any]) -> dic
             f"access request {request['request_id']!r} is addressed to "
             f"{pending['target_org']}, not {led.org_id}"
         )
-    return led._put(DocType.ACCESS_DECISION, request["decision_id"], request)
+    return led._put(
+        DocType.ACCESS_DECISION, request["decision_id"], request, drop=("decision_id",)
+    )
 
 
 def _get_asset(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any] | None:
@@ -254,6 +256,18 @@ def _list_access_requests_for(led: InMemoryLedger, args: dict[str, Any]) -> list
     ]
 
 
+def _list_access_decisions_for(led: InMemoryLedger, args: dict[str, Any]) -> list[dict[str, Any]]:
+    """Answers addressed to a requester, wherever they were written. Each one
+    sits in the deciding organization's namespace, so this deliberately spans
+    namespaces rather than listing the requester's own assets."""
+    requester = args["requester_org"]
+    return [
+        v
+        for (_, d, _), v in sorted(led._state.items())
+        if d == str(DocType.ACCESS_DECISION) and v["requester_org"] == requester
+    ]
+
+
 _WRITES: dict[str, Callable[[InMemoryLedger, dict[str, Any]], Any]] = {
     Fn.REGISTER_STATION: _register_station,
     Fn.REGISTER_INSTRUMENT: _register_instrument,
@@ -271,4 +285,5 @@ _READS: dict[str, Callable[[InMemoryLedger, dict[str, Any]], Any]] = {
     Fn.LIST_ASSETS: _list_assets,
     Fn.VERIFY_OBSERVATION_ANCHOR: _verify_observation_anchor,
     Fn.LIST_ACCESS_REQUESTS_FOR: _list_access_requests_for,
+    Fn.LIST_ACCESS_DECISIONS_FOR: _list_access_decisions_for,
 }
