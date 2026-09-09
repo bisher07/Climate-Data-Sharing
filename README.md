@@ -17,6 +17,8 @@ and its chaincode are built separately; the two are joined at one seam, the
 | Org1 ingestion pipeline (Scenario A) | done |
 | Org2 — Ingestion, Quality / Validation, Access Negotiation, Policy | done |
 | Org2 validation pipeline (Scenarios B and C) | done |
+| Reasoning seam (where an LLM attaches) | done |
+| LLM-backed agents | not started |
 | Org3 — three agents | not started |
 | Wiring to the real Fabric gateway | not started |
 
@@ -25,7 +27,7 @@ and its chaincode are built separately; the two are joined at one seam, the
 ```bash
 uv run python experiments/scenario_a_org1.py   # Org1, narrated
 uv run python experiments/scenario_b_org2.py   # Org2 + cross-org divergence
-uv run pytest                                  # 87 tests
+uv run pytest                                  # 99 tests
 ```
 
 ## Layout
@@ -33,12 +35,13 @@ uv run pytest                                  # 87 tests
 ```
 src/agent_prototype/
 ├── ledger/          the interface agents talk to, plus an in-memory stand-in
+├── reasoning/       where an LLM attaches, plus deterministic stand-ins
 ├── shared/          domain models, canonical hashing, injectable clock
 ├── agents/org1/     Org1's two agents and its ingestion pipeline
 └── agents/org2/     Org2's four agents and its validation pipeline
 tests/               agent behaviour: screening, refusals, audit trail
 experiments/         runnable scenarios
-docs/                the integration contract
+docs/                the two integration contracts
 ```
 
 Org1 and Org2 share the models and the ledger interface, and nothing else. They
@@ -81,4 +84,12 @@ the agent makes disagreement visible and leaves adjudication to people.
 
 Every agent so far is deterministic — schema validation, hashing, scoring,
 referential checks — which is what Section 10 asks for. There is no LLM in this
-layer yet.
+layer yet, but the seam it will attach to is defined:
+[docs/reasoning-interface.md](docs/reasoning-interface.md).
+
+That seam is built so a model cannot become the security mechanism (Section
+19). `Advice` has no `approved` field, so there is nowhere to put an approval,
+and `Decision.tightened_by` only ever *tightens* — advice can turn an approval
+into a refusal, never the reverse. A model that is wrong, or one talked into
+something by hostile text in a justification field, can only make an agent more
+cautious.
