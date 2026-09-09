@@ -85,14 +85,16 @@ class IngestionProvenanceAgent(Agent):
         return self.record_receipt(
             "register_station",
             request,
-            self.ledger.submit(Fn.REGISTER_STATION, request=request.model_dump(mode="json")),
+            self.ledger.submit(Fn.REGISTER_STATION,
+                               request=request.model_dump(mode="json")),
         )
 
     def register_instrument(self, request: InstrumentRegistrationRequest) -> TxReceipt:
         return self.record_receipt(
             "register_instrument",
             request,
-            self.ledger.submit(Fn.REGISTER_INSTRUMENT, request=request.model_dump(mode="json")),
+            self.ledger.submit(Fn.REGISTER_INSTRUMENT,
+                               request=request.model_dump(mode="json")),
         )
 
     def register_forecast_product(self, request: ForecastProductRequest) -> TxReceipt:
@@ -100,7 +102,8 @@ class IngestionProvenanceAgent(Agent):
             "register_forecast_product",
             request,
             self.ledger.submit(
-                Fn.REGISTER_FORECAST_PRODUCT, request=request.model_dump(mode="json")
+                Fn.REGISTER_FORECAST_PRODUCT, request=request.model_dump(
+                    mode="json")
             ),
         )
 
@@ -154,7 +157,8 @@ class IngestionProvenanceAgent(Agent):
             "submit_anchor",
             prepared.request,
             self.ledger.submit(
-                Fn.CREATE_OBSERVATION_ANCHOR, request=prepared.request.model_dump(mode="json")
+                Fn.CREATE_OBSERVATION_ANCHOR, request=prepared.request.model_dump(
+                    mode="json")
             ),
         )
 
