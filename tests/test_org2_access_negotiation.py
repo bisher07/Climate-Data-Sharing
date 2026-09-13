@@ -142,3 +142,33 @@ def test_the_agent_grants_nothing_on_its_own_authority(
 
     assert decision.owner_org == ORG1
     assert decision.requester_org == ORG2
+
+
+# --- what a grant covers -----------------------------------------------------
+
+
+def test_a_station_grant_covers_the_readings_that_station_produced(
+    org2_granted, ingestion, observation, calibration
+):
+    """Nobody requests hourly readings one by one. A grant on the site covers
+    what the site measures."""
+    assert ingestion.submit_anchor(
+        ingestion.prepare_anchor("OBS-ORG1", observation, calibration)
+    ).committed
+
+    reading = AssetRef(owner_org=ORG1, doc_type=DocType.OBSERVATION_ANCHOR, asset_id="OBS-ORG1")
+    assert org2_granted.may_use(reading)
+
+
+def test_a_decision_cannot_cover_data_its_author_does_not_own():
+    """Defence in depth: even if a decision granting someone else's data were
+    ever stored, it would not count."""
+    from agent_prototype.shared.models import AccessDecision
+
+    forged = AccessDecision(
+        id="AD-FORGED", owner_org="Org3MSP", created_at=T0, created_by_tx="tx-1",
+        request_id="AR-1", requester_org=ORG2, approved=True, reason="granted",
+        granted=[ORG1_STATION],
+    )
+
+    assert not forged.covers(ORG1_STATION, now=T0)

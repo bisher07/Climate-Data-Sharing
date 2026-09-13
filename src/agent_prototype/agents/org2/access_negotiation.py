@@ -123,25 +123,33 @@ class AccessNegotiationAgent(Agent):
 
     def granted_assets(self) -> list[AssetRef]:
         """What Org2 may currently use, according to the organizations that own
-        it. Refusals grant nothing, and an expired approval grants nothing
-        either — a grant that has run out is indistinguishable from one that was
-        never given.
+        it. Refusals grant nothing, an expired approval grants nothing, and a
+        decision cannot grant data its author does not own.
         """
         now = self.clock.now()
-        granted: list[AssetRef] = []
-        for decision in self.decisions():
-            if not decision.approved:
-                continue
-            if decision.valid_until is not None and decision.valid_until < now:
-                continue
-            granted.extend(decision.granted)
-        return granted
+        return [
+            ref
+            for decision in self.decisions()
+            for ref in decision.granted
+            if decision.covers(ref, now=now)
+        ]
 
     def may_use(self, ref: AssetRef) -> bool:
         """Whether Org2 can point at a reason it holds this data legitimately.
 
         Advisory, like every agent check: it reports what the ledger already
-        says. Org2's own data needs no grant, which is why that case is
-        answered here rather than looked up.
+        says. Org2's own data needs no grant. An observation is covered by a
+        grant on the observation itself or on the site that produced it, so the
+        anchor is read to learn which site that was.
         """
-        return ref.owner_org == self.org_id or ref in self.granted_assets()
+        if ref.owner_org == self.org_id:
+            return True
+        site_id = None
+        if ref.doc_type is DocType.OBSERVATION_ANCHOR:
+            anchor = self.ledger.evaluate(
+                Fn.GET_ASSET, owner_org=ref.owner_org,
+                doc_type=str(DocType.OBSERVATION_ANCHOR), asset_id=ref.asset_id,
+            )
+            site_id = anchor["station_id"] if anchor else None
+        now = self.clock.now()
+        return any(d.covers(ref, now=now, site_id=site_id) for d in self.decisions())

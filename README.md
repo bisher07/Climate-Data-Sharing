@@ -27,7 +27,7 @@ and its chaincode are built separately; the two are joined at one seam, the
 ```bash
 uv run python experiments/scenario_a_org1.py   # Org1, narrated
 uv run python experiments/scenario_b_org2.py   # Org2 + cross-org divergence
-uv run pytest                                  # 99 tests
+uv run pytest                                  # 127 tests
 ```
 
 ## Layout

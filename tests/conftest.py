@@ -23,7 +23,9 @@ from agent_prototype.agents.org1 import (
 )
 from agent_prototype.ledger import InMemoryLedger
 from agent_prototype.shared.models import (
+    AssetRef,
     Calibration,
+    DocType,
     InstrumentRegistrationRequest,
     ObservationRecord,
     SensorRegistrationRequest,
@@ -153,9 +155,33 @@ def org2_negotiation(org2_ledger, clock) -> org2_agents.AccessNegotiationAgent:
 
 @pytest.fixture
 def org2_pipeline(
-    org2_ingestion, org2_quality, org2_policy
+    org2_ingestion, org2_quality, org2_policy, org2_negotiation
 ) -> org2_agents.Org2ValidationPipeline:
-    return org2_agents.Org2ValidationPipeline(org2_ingestion, org2_quality, org2_policy)
+    return org2_agents.Org2ValidationPipeline(
+        org2_ingestion, org2_quality, org2_policy, org2_negotiation
+    )
+
+
+ORG1_STATION = AssetRef(owner_org=ORG1, doc_type=DocType.STATION, asset_id="ST-SHJ-001")
+
+
+@pytest.fixture
+def org2_granted(org2_negotiation, policy, registered):
+    """Org2 holding Org1's approval for station ST-SHJ-001, and so for the
+    readings that station produces."""
+    submission = org2_negotiation.draft_request(
+        "AR-ORG2-1",
+        target_org=ORG1,
+        purpose="validation",
+        justification="Cross-checking Org2 microclimate nodes against the coastal AWS.",
+        requested=[ORG1_STATION],
+    )
+    assert org2_negotiation.submit_request(submission).committed
+    request = policy.pending_access_requests()[0]
+    assert policy.respond_to_access_request(
+        request, policy.review_access_request(request)
+    ).committed
+    return org2_negotiation
 
 
 @pytest.fixture

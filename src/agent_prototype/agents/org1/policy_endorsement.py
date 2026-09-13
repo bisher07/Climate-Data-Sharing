@@ -19,15 +19,17 @@ and the deterministic checks around it would still have to pass first.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from agent_prototype.agents.base import Agent, Decision
 from agent_prototype.agents.org1.ingestion_provenance import SCHEMA_VERSION, PreparedAnchor
 from agent_prototype.ledger.port import Fn, TxReceipt
 from agent_prototype.shared.models import (
+    AccessDecision,
     AccessDecisionRequest,
     AccessRequest,
     AssetStatus,
+    CompositeProposal,
     DocType,
 )
 from agent_prototype.shared.utilities.canonical import hash_payload
@@ -127,6 +129,65 @@ class PolicyEndorsementAgent(Agent):
                             {"owner_org": owner_org, "description": description}, reasons, [])
 
     # ------------------------------------------------------------------
+    # Co-endorsing records other organizations build from Org1 data
+    # ------------------------------------------------------------------
+
+    def review_composite(self, proposal: CompositeProposal) -> Decision:
+        """Decide whether Org1 co-endorses a record that cites Org1 data.
+
+        Section 2: Org1 must co-endorse composite records referencing its
+        stations, and has no standing to endorse anything that does not.
+
+        The review checks citations and nothing else — that each cited Org1
+        asset exists, that the claimed hash is the one on the ledger, and that
+        the proposer was granted it. The proposal carries no account of what
+        the record concludes, so Org1 cannot withhold endorsement from a
+        divergence flag because the flag disagrees with Org1.
+        """
+        reasons: list[str] = []
+        own = [c for c in proposal.cited if c.ref.owner_org == self.org_id]
+        if not own:
+            reasons.append(
+                f"proposal {proposal.proposal_id!r} cites no {self.org_id} data; "
+                f"{self.org_id} has no standing to endorse it"
+            )
+
+        needs_grant = proposal.proposer_org != self.org_id
+        decisions = [
+            AccessDecision.model_validate(item)
+            for item in self.ledger.evaluate(
+                Fn.LIST_ACCESS_DECISIONS_FOR, requester_org=proposal.proposer_org
+            )
+        ] if own and needs_grant else []
+        now = self.clock.now()
+
+        for cited in own:
+            asset = self._own_asset(cited.ref.doc_type, cited.ref.asset_id)
+            if asset is None:
+                reasons.append(f"cited {cited.ref} does not exist")
+                continue
+            stored = asset.get("data_hash")
+            if stored is not None and cited.data_hash is None:
+                reasons.append(f"cites {cited.ref} without a hash, so its version cannot be verified")
+            elif stored is not None and cited.data_hash != stored:
+                reasons.append(
+                    f"cites {cited.ref} with hash {cited.data_hash[:12]}…, "
+                    f"but the ledger holds {stored[:12]}…"
+                )
+            if needs_grant and not any(
+                d.covers(cited.ref, now=now, site_id=asset.get("station_id")) for d in decisions
+            ):
+                reasons.append(
+                    f"{proposal.proposer_org} holds no current grant from {self.org_id} "
+                    f"for {cited.ref}"
+                )
+
+        return self._decide("review_composite", proposal, reasons, [],
+                            proposal_id=proposal.proposal_id,
+                            proposer=proposal.proposer_org,
+                            record_kind=proposal.record_kind)
+
+    # ------------------------------------------------------------------
     # Requests from other organizations for Org1 data
     # ------------------------------------------------------------------
 
@@ -178,10 +239,14 @@ class PolicyEndorsementAgent(Agent):
             reasons.append(f"requested assets do not exist: {missing}")
 
         embargoed = []
+        now = self.clock.now()
         for ref in request.requested:
-            asset = self._own_asset(ref.doc_type, ref.asset_id) if not missing else None
-            until = (asset or {}).get("embargoed_until")
-            if until is not None and self.clock.now().isoformat() < until:
+            if missing or ref.owner_org != self.org_id:
+                continue
+            until = (self._own_asset(ref.doc_type, ref.asset_id) or {}).get("embargoed_until")
+            # Compared as instants: ISO text sorts by its digits, so an embargo
+            # written in Gulf time would otherwise outlast the same moment in UTC.
+            if until is not None and now < datetime.fromisoformat(until):
                 embargoed.append(f"{ref} until {until}")
         if embargoed:
             reasons.append(f"requested products are under embargo: {embargoed}")

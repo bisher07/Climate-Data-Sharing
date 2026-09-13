@@ -16,7 +16,7 @@ import itertools
 from typing import Any, Callable
 
 from agent_prototype.ledger.port import Fn, TxReceipt, TxStatus
-from agent_prototype.shared.models import DocType
+from agent_prototype.shared.models import AccessDecision, AssetRef, DocType
 from agent_prototype.shared.utilities.canonical import sha256_hex
 from agent_prototype.shared.utilities.clock import Clock, SystemClock
 
@@ -128,13 +128,19 @@ class InMemoryLedger:
 
 def _register_station(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
     request = args["request"]
-    return led._put(DocType.STATION, request["station_id"], {**request, "status": "ACTIVE"})
+    return led._put(
+        DocType.STATION, request["station_id"], {**request, "status": "ACTIVE"},
+        drop=("station_id",),
+    )
 
 
 def _register_instrument(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
     request = args["request"]
     led._own(DocType.STATION, request["station_id"], "station")
-    return led._put(DocType.INSTRUMENT, request["instrument_id"], {**request, "status": "ACTIVE"})
+    return led._put(
+        DocType.INSTRUMENT, request["instrument_id"], {**request, "status": "ACTIVE"},
+        drop=("instrument_id",),
+    )
 
 
 def _create_observation_anchor(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
@@ -157,17 +163,23 @@ def _create_observation_anchor(led: InMemoryLedger, args: dict[str, Any]) -> dic
         DocType.OBSERVATION_ANCHOR,
         request["observation_id"],
         {**request, "quality_status": "UNVALIDATED"},
+        drop=("observation_id",),
     )
 
 
 def _register_forecast_product(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
     request = args["request"]
-    return led._put(DocType.FORECAST_PRODUCT, request["product_id"], request)
+    return led._put(
+        DocType.FORECAST_PRODUCT, request["product_id"], request, drop=("product_id",)
+    )
 
 
 def _register_sensor(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
     request = args["request"]
-    return led._put(DocType.SENSOR, request["sensor_id"], {**request, "status": "ACTIVE"})
+    return led._put(
+        DocType.SENSOR, request["sensor_id"], {**request, "status": "ACTIVE"},
+        drop=("sensor_id",),
+    )
 
 
 def _create_quality_record(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
@@ -179,14 +191,29 @@ def _create_quality_record(led: InMemoryLedger, args: dict[str, Any]) -> dict[st
 def _create_divergence_flag(led: InMemoryLedger, args: dict[str, Any]) -> dict[str, Any]:
     request = args["request"]
     led._own(DocType.OBSERVATION_ANCHOR, request["org2_observation_id"], "observation")
-    reference = led._any(
-        request["reference_org"], DocType.OBSERVATION_ANCHOR, request["reference_observation_id"]
-    )
+    reference_org = request["reference_org"]
+    reference_id = request["reference_observation_id"]
+    reference = led._any(reference_org, DocType.OBSERVATION_ANCHOR, reference_id)
     if reference is None:
         raise Rejected(
-            f"referenced observation {request['reference_observation_id']!r} owned by "
-            f"{request['reference_org']} does not exist"
+            f"referenced observation {reference_id!r} owned by {reference_org} does not exist"
         )
+    # Comparing against another organization's reading means holding its raw
+    # data, which only that organization can release.
+    if reference_org != led.org_id:
+        ref = AssetRef(
+            owner_org=reference_org, doc_type=DocType.OBSERVATION_ANCHOR, asset_id=reference_id
+        )
+        now = led._clock.now()
+        decisions = [
+            AccessDecision.model_validate(item)
+            for item in _list_access_decisions_for(led, {"requester_org": led.org_id})
+        ]
+        if not any(d.covers(ref, now=now, site_id=reference["station_id"]) for d in decisions):
+            raise Rejected(
+                f"{led.org_id} holds no current grant from {reference_org} covering "
+                f"observation {reference_id!r}"
+            )
     return led._put(
         DocType.DIVERGENCE_FLAG, request["flag_id"], request, drop=("flag_id",)
     )
@@ -213,6 +240,9 @@ def _respond_to_access_request(led: InMemoryLedger, args: dict[str, Any]) -> dic
             f"access request {request['request_id']!r} is addressed to "
             f"{pending['target_org']}, not {led.org_id}"
         )
+    foreign = sorted({g["owner_org"] for g in request["granted"] if g["owner_org"] != led.org_id})
+    if foreign:
+        raise Rejected(f"{led.org_id} cannot grant access to data owned by {', '.join(foreign)}")
     return led._put(
         DocType.ACCESS_DECISION, request["decision_id"], request, drop=("decision_id",)
     )

@@ -112,6 +112,39 @@ compromised, or replaced.
    readings differ, by how much, and against what threshold. Nothing in it
    marks either organization as wrong, and committing one must give its author
    no standing over the referenced organization's data (Section 9).
+8. **Only an asset's owner can grant access to it.** An access decision whose
+   `granted` list names another organization's asset is rejected — answering a
+   request addressed to you does not let you release someone else's data.
+9. **Citing another organization's observation needs a current grant.** A
+   divergence flag whose reference belongs to another organization is
+   rejected unless that organization has an approved, unexpired decision for
+   the submitter covering it. A grant covers an observation directly, or
+   through the station or sensor that produced it. Comparing two readings means
+   holding the other side's raw data, and only its owner can release that.
+
+Stored assets carry `id` and not the request's own identifier field
+(`station_id`, `observation_id`, `product_id`…), so every record reads back as
+its ledger model with nothing left over.
+
+## Co-endorsement — what the agents contribute
+
+A composite record lives in its proposer's namespace but cites assets in other
+namespaces. Before a cited organization's peers endorse it, that
+organization's policy agent reviews a `CompositeProposal` through
+`review_composite`, and the integration layer should gate the peer's
+endorsement on that decision.
+
+The review inspects **citations only**: that each cited asset of the reviewing
+organization exists, that the claimed `data_hash` is the one on the ledger, and
+that the proposer holds a current grant for it. An organization cited nowhere
+in the proposal has no standing and refuses.
+
+`CompositeProposal` has no field describing what the record concludes, and
+that is load-bearing. Under the endorsement policy below, Org1 co-endorses
+Org2's divergence flags about Org1's own readings. A reviewer shown the
+conclusion could withhold endorsement from a record for disagreeing with it —
+which would turn co-endorsement into a veto on disagreement. The chaincode must
+not reintroduce one either.
 
 ## Two things worth deciding together
 

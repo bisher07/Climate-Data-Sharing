@@ -323,6 +323,71 @@ class AccessDecision(LedgerAsset):
     conditions: list[str] = Field(default_factory=list)
     valid_until: datetime | None = None
 
+    def covers(self, ref: AssetRef, *, now: datetime, site_id: str | None = None) -> bool:
+        """Whether this decision currently lets its requester use `ref`.
+
+        Only the asset's owner can grant it: a decision written by one
+        organization never covers another organization's data, whatever its
+        `granted` list says. A grant on a site — a station or a sensor —
+        covers the observations that site produced, since nobody requests
+        hourly readings one at a time; pass the anchor's site as `site_id`.
+        """
+        if not self.approved or self.owner_org != ref.owner_org:
+            return False
+        if self.valid_until is not None and self.valid_until < now:
+            return False
+        for granted in self.granted:
+            if granted.owner_org != self.owner_org:
+                continue
+            if granted == ref:
+                return True
+            if (
+                site_id is not None
+                and ref.doc_type is DocType.OBSERVATION_ANCHOR
+                and granted.doc_type in (DocType.STATION, DocType.SENSOR)
+                and granted.asset_id == site_id
+            ):
+                return True
+        return False
+
+
+# --------------------------------------------------------------------------
+# Composite records
+#
+# A composite record lives in its proposer's namespace but depends on assets
+# in other namespaces: a divergence flag citing another organization's
+# reading, a derived product built from others' observations. Each cited
+# organization co-endorses (Sections 2 and 3), and its policy agent reviews
+# the *citations* — never what the record concludes from them.
+# --------------------------------------------------------------------------
+
+
+class CitedInput(Frozen):
+    """One input a composite record depends on, as the proposer claims it.
+
+    `data_hash` is required whenever the cited asset carries a content hash;
+    without it the citation names an asset but cannot prove which version.
+    """
+
+    ref: AssetRef
+    data_hash: Sha256Hex | None = None
+
+
+class CompositeProposal(Frozen):
+    """A transaction awaiting co-endorsement from the organizations it cites.
+
+    `proposer_org` is the creator identity on the signed proposal, filled in by
+    whatever delivers it to the reviewer — never a value the proposer asserts.
+    There is deliberately no field describing what the record *says*: a
+    reviewer that cannot see the conclusion cannot refuse to endorse it for
+    disagreeing with it.
+    """
+
+    proposal_id: NonEmpty
+    proposer_org: NonEmpty
+    record_kind: NonEmpty
+    cited: list[CitedInput] = Field(min_length=1)
+
 
 # --------------------------------------------------------------------------
 # Org2 quality / validation (Section 9)

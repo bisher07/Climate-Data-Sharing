@@ -34,9 +34,11 @@ from agent_prototype.agents.org2.ingestion_provenance import SCHEMA_VERSION, Pre
 from agent_prototype.agents.org2.quality_validation import DEFAULT_MAX_CALIBRATION_AGE
 from agent_prototype.ledger.port import Fn, TxReceipt
 from agent_prototype.shared.models import (
+    AccessDecision,
     AccessDecisionRequest,
     AccessRequest,
     AssetStatus,
+    CompositeProposal,
     DivergenceFlagRequest,
     DocType,
     QualityRecordRequest,
@@ -209,6 +211,65 @@ class PolicyEndorsementAgent(Agent):
         )
         return self._decide("review_foreign_data",
                             {"owner_org": owner_org, "description": description}, reasons, [])
+
+    # ------------------------------------------------------------------
+    # Co-endorsing records other organizations build from Org2 data
+    # ------------------------------------------------------------------
+
+    def review_composite(self, proposal: CompositeProposal) -> Decision:
+        """Decide whether Org2 co-endorses a record that cites Org2 data.
+
+        Section 3: Org2 co-endorses composite records involving its data, and
+        cannot approve outputs on another organization's behalf.
+
+        Citations only — existence, hash, and the proposer's grant. The
+        proposal describes no conclusion, so a record that reflects badly on
+        an Org2 sensor cannot be refused for doing so. Compliance-sensitive
+        readings need no separate check: Org2 never grants them automatically,
+        so a proposer citing one fails the grant test.
+        """
+        reasons: list[str] = []
+        own = [c for c in proposal.cited if c.ref.owner_org == self.org_id]
+        if not own:
+            reasons.append(
+                f"proposal {proposal.proposal_id!r} cites no {self.org_id} data; "
+                f"{self.org_id} has no standing to endorse it"
+            )
+
+        needs_grant = proposal.proposer_org != self.org_id
+        decisions = [
+            AccessDecision.model_validate(item)
+            for item in self.ledger.evaluate(
+                Fn.LIST_ACCESS_DECISIONS_FOR, requester_org=proposal.proposer_org
+            )
+        ] if own and needs_grant else []
+        now = self.clock.now()
+
+        for cited in own:
+            asset = self._own_asset(cited.ref.doc_type, cited.ref.asset_id)
+            if asset is None:
+                reasons.append(f"cited {cited.ref} does not exist")
+                continue
+            stored = asset.get("data_hash")
+            if stored is not None and cited.data_hash is None:
+                reasons.append(f"cites {cited.ref} without a hash, so its version cannot be verified")
+            elif stored is not None and cited.data_hash != stored:
+                reasons.append(
+                    f"cites {cited.ref} with hash {cited.data_hash[:12]}…, "
+                    f"but the ledger holds {stored[:12]}…"
+                )
+            if needs_grant and not any(
+                d.covers(cited.ref, now=now, site_id=asset.get("station_id")) for d in decisions
+            ):
+                reasons.append(
+                    f"{proposal.proposer_org} holds no current grant from {self.org_id} "
+                    f"for {cited.ref}"
+                )
+
+        return self._decide("review_composite", proposal, reasons, [],
+                            proposal_id=proposal.proposal_id,
+                            proposer=proposal.proposer_org,
+                            record_kind=proposal.record_kind)
 
     # ------------------------------------------------------------------
     # Requests from other organizations for Org2 data

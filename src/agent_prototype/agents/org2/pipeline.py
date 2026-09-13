@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from agent_prototype.agents.base import Decision
+from agent_prototype.agents.org2.access_negotiation import AccessNegotiationAgent
 from agent_prototype.agents.org2.ingestion_provenance import (
     IngestionProvenanceAgent,
     PreparedAnchor,
@@ -28,8 +29,10 @@ from agent_prototype.agents.org2.policy_endorsement import PolicyEndorsementAgen
 from agent_prototype.agents.org2.quality_validation import QualityValidationAgent
 from agent_prototype.ledger.port import TxReceipt
 from agent_prototype.shared.models import (
+    AssetRef,
     Calibration,
     DivergenceFlagRequest,
+    DocType,
     ObservationRecord,
     QualityRecordRequest,
 )
@@ -41,6 +44,7 @@ class Stage(StrEnum):
     """Where an observation stopped. Countable, for evaluation metrics."""
 
     SCREENING = "SCREENING"
+    NOT_GRANTED = "NOT_GRANTED"  # `compare` only: the other reading was never released
     POLICY_REVIEW = "POLICY_REVIEW"
     LEDGER_REJECTED = "LEDGER_REJECTED"
     COMMITTED = "COMMITTED"
@@ -70,13 +74,15 @@ class Org2ValidationPipeline:
         ingestion: IngestionProvenanceAgent,
         quality: QualityValidationAgent,
         policy: PolicyEndorsementAgent,
+        negotiation: AccessNegotiationAgent,
     ) -> None:
-        orgs = {ingestion.org_id, quality.org_id, policy.org_id}
+        orgs = {ingestion.org_id, quality.org_id, policy.org_id, negotiation.org_id}
         if len(orgs) != 1:
             raise ValueError(f"agents belong to different organizations: {sorted(orgs)}")
         self.ingestion = ingestion
         self.quality = quality
         self.policy = policy
+        self.negotiation = negotiation
 
     def ingest(
         self,
@@ -145,7 +151,24 @@ class Org2ValidationPipeline:
         threshold: float,
     ) -> PipelineResult:
         """Compare one variable against another organization's reading and,
-        if they disagree past the threshold, propose a divergence flag."""
+        if they disagree past the threshold, propose a divergence flag.
+
+        Access is checked before the comparison runs, not after. Holding
+        another organization's raw reading is itself the use that needs a
+        grant, so a comparison on unreleased data is not computed at all —
+        rather than computed and then quietly not published.
+        """
+        reference = AssetRef(
+            owner_org=reference_org,
+            doc_type=DocType.OBSERVATION_ANCHOR,
+            asset_id=reference_observation_id,
+        )
+        if not self.negotiation.may_use(reference):
+            return PipelineResult(
+                org2_observation_id, Stage.NOT_GRANTED,
+                error=f"{reference_org} has not released {reference} to {self.quality.org_id}",
+            )
+
         flag = self.quality.detect_divergence(
             org2_observation_id,
             org2_record,

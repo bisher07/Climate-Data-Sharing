@@ -87,8 +87,29 @@ def _both_anchored(org2_pipeline, ingestion, org2_observation, observation, cali
     ).committed
 
 
+def test_a_reading_org2_was_never_granted_is_not_compared(
+    org2_pipeline, org2_quality, org2_registered, registered, ingestion,
+    org2_observation, observation, calibration, org2_ledger,
+):
+    """Holding another organization's raw reading is the use that needs a
+    grant, so without one the comparison is never computed at all."""
+    _both_anchored(org2_pipeline, ingestion, org2_observation, observation, calibration)
+    before = len(org2_ledger.submitted)
+
+    result = org2_pipeline.compare(
+        "OBS-ORG2", org2_observation,
+        reference_org=ORG1, reference_observation_id="OBS-ORG1",
+        reference_record=observation, variable="air_temperature", threshold=2.0,
+    )
+
+    assert result.stage is Stage.NOT_GRANTED
+    assert "has not released" in result.error
+    assert len(org2_ledger.submitted) == before
+    assert not any(e.action == "detect_divergence" for e in org2_quality.audit_trail)
+
+
 def test_agreeing_readings_produce_no_flag(
-    org2_pipeline, org2_registered, registered, ingestion,
+    org2_pipeline, org2_registered, org2_granted, ingestion,
     org2_observation, observation, calibration, org2_ledger,
 ):
     _both_anchored(org2_pipeline, ingestion, org2_observation, observation, calibration)
@@ -105,7 +126,7 @@ def test_agreeing_readings_produce_no_flag(
 
 
 def test_disagreeing_readings_are_flagged_on_the_ledger(
-    org2_pipeline, org2_registered, registered, ingestion,
+    org2_pipeline, org2_registered, org2_granted, ingestion,
     org2_observation, observation, calibration,
 ):
     cold = observation.model_copy(
@@ -126,7 +147,7 @@ def test_disagreeing_readings_are_flagged_on_the_ledger(
 
 
 def test_the_flag_is_owned_by_org2_not_by_the_org_it_disagrees_with(
-    org2_pipeline, org2_registered, registered, ingestion,
+    org2_pipeline, org2_registered, org2_granted, ingestion,
     org2_observation, observation, calibration,
 ):
     """Section 9: Org2 writes the flag, in Org2's namespace. Disagreeing with
@@ -147,11 +168,11 @@ def test_the_flag_is_owned_by_org2_not_by_the_org_it_disagrees_with(
 
 
 def test_a_pipeline_cannot_be_built_from_two_organizations_agents(
-    org2_ingestion, org2_quality, policy
+    org2_ingestion, org2_quality, policy, org2_negotiation
 ):
     import pytest
 
     from agent_prototype.agents.org2 import Org2ValidationPipeline
 
     with pytest.raises(ValueError, match="different organizations"):
-        Org2ValidationPipeline(org2_ingestion, org2_quality, policy)
+        Org2ValidationPipeline(org2_ingestion, org2_quality, policy, org2_negotiation)
